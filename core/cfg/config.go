@@ -65,6 +65,7 @@ type FlagStorage struct {
 	Cheap               bool
 	ExplicitDir         bool
 	NoDirObject         bool
+	SlurpDelimited      bool
 	MaxFlushers         int64
 	MaxParallelParts    int
 	MaxParallelCopy     int
