@@ -272,8 +272,7 @@ MISC OPTIONS:
 			Name: "slurp-delimited",
 			Usage: "Use recursive delimiter=/ listings for slurp/preload. " +
 				"Enable for S3-compatible servers that don't implement " +
-				"no-delimiter ListObjectsV2 correctly. GeeseFS also auto-detects " +
-				"this case when a no-delimiter response still contains CommonPrefixes.",
+				"no-delimiter ListObjectsV2 correctly.",
 		},
 
 		cli.BoolFlag{

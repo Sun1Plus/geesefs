@@ -239,11 +239,8 @@ func RetryListBlobs(flags *cfg.FlagStorage, cloud StorageBackend, req *ListBlobs
 }
 
 // listBlobsDelimitedRecursive lists every object under rootPrefix using
-// delimiter=/ and recursing into each returned CommonPrefix. It is used as a
-// fallback for the normal no-delimiter slurp when the server does not
-// implement no-delimiter ListObjectsV2 correctly (e.g. returns CommonPrefixes
-// without the objects below them), and also when the user sets
-// --slurp-delimited.
+// delimiter=/ and recursing into each returned CommonPrefix. It is used when
+// the user sets --slurp-delimited.
 //
 // The returned items are sorted by Key so that downstream insertSubTree +
 // sealPastDirs logic, which assumes lexicographic key order, keeps working.
@@ -301,18 +298,14 @@ func (parent *Inode) listObjectsSlurp(inode *Inode, startAfter string, sealEnd b
 
 	myList := parent.fs.addInflightListing()
 
-	// Root under which we would recurse if we fall back to delimited listings.
-	// Everything the non-delimited slurp would have returned lives under this
-	// prefix; for a sub-inode that's prefix+key+"/", otherwise just prefix.
-	recursiveRoot := prefix
-	if key != "" {
-		recursiveRoot = prefix + key + "/"
-	}
-
 	var resp *ListBlobsOutput
 	if parent.fs.flags.SlurpDelimited {
 		// User told us the server can't handle no-delimiter ListObjectsV2.
 		// Skip the probe entirely and go straight to delimited recursion.
+		recursiveRoot := prefix
+		if key != "" {
+			recursiveRoot += key + "/"
+		}
 		items, listErr := listBlobsDelimitedRecursive(parent.fs.flags, cloud, recursiveRoot)
 		if listErr != nil {
 			parent.fs.completeInflightListing(myList)
@@ -332,22 +325,6 @@ func (parent *Inode) listObjectsSlurp(inode *Inode, startAfter string, sealEnd b
 		}
 		s3Log.Debug(resp)
 
-		// Auto-detect buggy S3-compatible servers that ignore the missing
-		// delimiter and respond with CommonPrefixes anyway. In that case the
-		// returned Items only cover the root layer and subdirectory contents
-		// are missing, so redo the listing with delimiter=/ recursion.
-		if len(resp.Prefixes) > 0 {
-			s3Log.Warnf("Server returned CommonPrefixes for a no-delimiter ListObjectsV2 "+
-				"under prefix=%q; falling back to delimited recursive slurp. "+
-				"Pass --slurp-delimited to skip the probe.", prefix)
-			items, listErr := listBlobsDelimitedRecursive(parent.fs.flags, cloud, recursiveRoot)
-			if listErr != nil {
-				parent.fs.completeInflightListing(myList)
-				err = listErr
-				return
-			}
-			resp = &ListBlobsOutput{Items: items}
-		}
 	}
 
 	// Filter out items before startAfter (relevant when a prior slurp round
