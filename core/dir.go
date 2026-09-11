@@ -323,9 +323,8 @@ func (parent *Inode) listObjectsSlurp(inode *Inode, startAfter string, sealEnd b
 			parent.fs.completeInflightListing(myList)
 			return
 		}
-		s3Log.Debug(resp)
-
 	}
+	s3Log.Debug(resp)
 
 	// Filter out items before startAfter (relevant when a prior slurp round
 	// already ingested them). We want to preserve the existing "one shot"
