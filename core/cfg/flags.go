@@ -269,6 +269,13 @@ MISC OPTIONS:
 		},
 
 		cli.BoolFlag{
+			Name: "slurp-delimited",
+			Usage: "Use recursive delimiter=/ listings for slurp/preload. " +
+				"Enable for S3-compatible servers that don't implement " +
+				"no-delimiter ListObjectsV2 correctly.",
+		},
+
+		cli.BoolFlag{
 			Name:  "no-detect",
 			Usage: "Turn off autodetection of anonymous access, bucket location and signature algorithm on start",
 		},
@@ -856,6 +863,7 @@ func PopulateFlags(c *cli.Context) (ret *FlagStorage) {
 		Cheap:               c.Bool("cheap"),
 		ExplicitDir:         c.Bool("no-implicit-dir"),
 		NoDirObject:         c.Bool("no-dir-object"),
+		SlurpDelimited:      c.Bool("slurp-delimited"),
 		MaxFlushers:         int64(c.Int("max-flushers")),
 		MaxParallelParts:    c.Int("max-parallel-parts"),
 		MaxParallelCopy:     c.Int("max-parallel-copy"),

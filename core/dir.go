@@ -238,6 +238,49 @@ func RetryListBlobs(flags *cfg.FlagStorage, cloud StorageBackend, req *ListBlobs
 	return
 }
 
+// listBlobsDelimitedRecursive lists every object under rootPrefix using
+// delimiter=/ and recursing into each returned CommonPrefix. It is used when
+// the user sets --slurp-delimited.
+//
+// The returned items are sorted by Key so that downstream insertSubTree +
+// sealPastDirs logic, which assumes lexicographic key order, keeps working.
+func listBlobsDelimitedRecursive(flags *cfg.FlagStorage, cloud StorageBackend, rootPrefix string) ([]BlobItemOutput, error) {
+	slash := PString("/")
+	var out []BlobItemOutput
+	// BFS over prefixes; order doesn't matter because we sort at the end.
+	queue := []string{rootPrefix}
+	for len(queue) > 0 {
+		prefix := queue[0]
+		queue = queue[1:]
+		var token *string
+		for {
+			params := &ListBlobsInput{
+				Prefix:            &prefix,
+				Delimiter:         slash,
+				ContinuationToken: token,
+			}
+			resp, err := RetryListBlobs(flags, cloud, params)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, resp.Items...)
+			for _, p := range resp.Prefixes {
+				if p.Prefix != nil && *p.Prefix != prefix {
+					queue = append(queue, *p.Prefix)
+				}
+			}
+			if !resp.IsTruncated || resp.NextContinuationToken == nil {
+				break
+			}
+			token = resp.NextContinuationToken
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return NilStr(out[i].Key) < NilStr(out[j].Key)
+	})
+	return out, nil
+}
+
 func (parent *Inode) listObjectsSlurp(inode *Inode, startAfter string, sealEnd bool, lock bool) (nextStartAfter string, err error) {
 	// Prefix is for insertSubTree
 	cloud, prefix := parent.cloud()
@@ -255,16 +298,46 @@ func (parent *Inode) listObjectsSlurp(inode *Inode, startAfter string, sealEnd b
 
 	myList := parent.fs.addInflightListing()
 
-	params := &ListBlobsInput{
-		Prefix:     &prefix,
-		StartAfter: startWith,
-	}
-	resp, err := RetryListBlobs(parent.fs.flags, cloud, params)
-	if err != nil {
-		parent.fs.completeInflightListing(myList)
-		return
+	var resp *ListBlobsOutput
+	if parent.fs.flags.SlurpDelimited {
+		// User told us the server can't handle no-delimiter ListObjectsV2.
+		// Skip the probe entirely and go straight to delimited recursion.
+		recursiveRoot := prefix
+		if key != "" {
+			recursiveRoot += key + "/"
+		}
+		items, listErr := listBlobsDelimitedRecursive(parent.fs.flags, cloud, recursiveRoot)
+		if listErr != nil {
+			parent.fs.completeInflightListing(myList)
+			err = listErr
+			return
+		}
+		resp = &ListBlobsOutput{Items: items}
+	} else {
+		params := &ListBlobsInput{
+			Prefix:     &prefix,
+			StartAfter: startWith,
+		}
+		resp, err = RetryListBlobs(parent.fs.flags, cloud, params)
+		if err != nil {
+			parent.fs.completeInflightListing(myList)
+			return
+		}
 	}
 	s3Log.Debug(resp)
+
+	// Filter out items before startAfter (relevant when a prior slurp round
+	// already ingested them). We want to preserve the existing "one shot"
+	// behaviour of the recursive path while not double-inserting.
+	if startAfter != "" {
+		filtered := resp.Items[:0]
+		for _, obj := range resp.Items {
+			if obj.Key != nil && *obj.Key > startAfter {
+				filtered = append(filtered, obj)
+			}
+		}
+		resp.Items = filtered
+	}
 
 	if lock {
 		parent.mu.Lock()
